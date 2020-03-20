@@ -1,0 +1,491 @@
+---
+title: "Covid-19 Indonesia's Infection Rate"
+author: "Deo Ivan Mareza"
+date: "3/20/2020"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: no
+  word_document:
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(wesanderson)
+```
+
+# Introduction {.tabset}
+
+At the time of writing this, many countries are currently on lockdown and the rate of Covid-19 infections is on the rise with no clear sign of stopping. Despite that, many people doesn't seem to care or know the gravity and scale of the situations.
+<br>
+
+I hope with this little exercise, however inaccurate the result may be at the end, can help raise some awareness on covid-19.
+<br>
+
+The dataset we're using came from John Hopkins School of Public Health, and it's updated up to 18th of March 2020. I added one observation for Indonesia, taken from katadata (https://katadata.co.id/sorot/detail/26/krisis-virus-corona) as an effort to improve the model forecasting ability. 
+
+
+## Library
+```{r, message = F, warning=F}
+library(skimr)
+library(tidyverse)
+library(ggplot2)
+library(GGally)
+library(janitor)
+library(lubridate)
+library(countrycode)
+library(plotly)
+
+library(extrafont)
+
+font_import()
+loadfonts()
+```
+
+## Data Import
+
+```{r}
+
+covid <- read.csv("data_input/train.csv")
+
+colnames(covid) <- make_clean_names(colnames(covid))
+
+head(covid)
+
+```
+
+
+
+# Data Wrangling
+
+We're only interested when the virus starts, so I'm removing all the 0 confirmed cases, as well as selecting only the `country`, `date`, and `confirmed cases`.
+
+```{r}
+covid_sel_2 <- covid %>% 
+  mutate(date = ymd(date)) %>% 
+  filter(confirmed_cases != 0) %>% 
+  select(country_region, date, confirmed_cases) 
+
+
+```
+
+
+
+I'd like visualize the virus progression from day to day and compare it between countries. So I made a small function to count the days since the first infection starts.
+
+```{r period counter function v1}
+
+period_count <- function(data2){
+    storage_vector <- rep(0,length(data2))
+    init_date <- data2[1]
+    
+    for (i in 1:length(data2)){
+      storage_vector[i] <- floor(time_length(as.period(interval(init_date, data2[i])) , unit = "days"))
+      if(storage_vector[i] < 0){ # this means we're moving country
+        storage_vector[i] = 0
+        init_date <- data2[i]
+      }
+    }
+    
+    return(storage_vector)
+
+}
+
+
+```
+
+<br>
+
+Below, I'm putting in the function from earlier, and adding continent, just in case we'd like to visualize that down the line.
+
+
+```{r}
+
+covid_sel_3 <- covid_sel_2 %>% 
+  group_by(country_region, date) %>%
+  summarise(total_confirmed_case = sum(confirmed_cases)) %>% 
+
+  mutate(day_count = period_count(date)) %>% 
+
+  ungroup() %>% 
+  mutate(continent = countrycode(sourcevar = country_region,
+                                 origin = "country.name",
+                                 destination = "continent")) %>% 
+  mutate(continent = as.factor(continent),
+         country_region = as.factor(country_region))
+
+
+
+id_newdata <- list(as.factor("Indonesia"), as.Date("2020-03-19"), 309, 17,as.factor( "Asia"))
+names(id_newdata) <- colnames(covid_sel_3)
+
+covid_sel_3 <- rbind(covid_sel_3[1:1234,], id_newdata, covid_sel_3[1235:2993,]) #inserting our new data as the last one in Indonesia's row
+
+```
+
+
+# Visualization
+
+## The Biggest Infection Numbers
+
+Before looking at Indonesia, let's see which country has the highest confirmed case and their progress.
+<br>
+Below I'm just selecting 10 country with the most confirmed case.
+
+```{r}
+big_num <- covid_sel_3 %>% 
+  arrange(-total_confirmed_case) %>% 
+  distinct(country_region) 
+
+top_ten_big <- big_num[1:10,]
+
+top_ten <- rep("a", 10)
+for (i in 1:nrow(top_ten_big)){
+  top_ten[i] <- as.character(top_ten_big[[i,1]])
+}
+
+```
+
+Our selected countries : 
+
+```{r, echo = F}
+top_ten_big
+```
+
+Plotting them in
+
+```{r}
+big_plot_1 <-  covid_sel_3 %>% 
+  filter(country_region %in% top_ten) %>% 
+  ggplot(aes(x = day_count, y = total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) +
+  
+    labs(title = "Negara dengan Kasus Terbanyak",
+       subtitle = "Perbandingan Angka dan Perkembangan dari Hari ke Hari",
+       caption = "Data diambil dari John Hopkins School of Public Health. \n Graph by Deo Mareza",
+       x = "Hari",
+       y = NULL,
+       color = NULL) +
+  
+  theme_minimal() +
+  
+    theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "right",
+        legend.key.size = unit(.1, units = "cm"),
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+ggplotly(big_plot_1)
+
+```
+
+As we can see from our plot, currently China and South Korea's rate has slowed down whereas other countries is still rising.
+<br>
+
+Since China is currently dominating let's try to remove it and see if we can get any other insight.
+
+```{r}
+
+big_plot_2 <-  covid_sel_3 %>% 
+  filter(country_region %in% top_ten) %>%
+  filter(country_region != "China") %>% 
+  ggplot(aes(x = day_count, y = total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) +
+  
+    labs(title = "Negara dengan Kasus Terbanyak selain China",
+       subtitle = "Perbandingan Angka dan Perkembangan dari Hari ke Hari",
+       caption = "Data diambil dari John Hopkins School of Public Health. \n Graph by Deo Mareza",
+       x = "Hari",
+       y = NULL,
+       color = NULL) +
+  
+  theme_minimal() +
+  
+    theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "right",
+        legend.key.size = unit(.1, units = "cm"),
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+ggplotly(big_plot_2)
+
+
+```
+
+The plot above validates the news recently about Italy, where the death toll has surpassed China's reported death toll. 
+
+<br>
+## Indonesia Compared to the Big Ones
+We'll be using our selection excluding China to make it easier to see.
+
+```{r}
+
+covid_id_big <- covid_sel_3 %>% 
+  filter(country_region %in% top_ten | country_region == "Indonesia") %>%
+  filter(country_region != "China")
+
+
+covid_id_big_text <- covid_id_big %>% 
+  group_by(country_region, day_count) %>% 
+  summarise(max_conf = max(total_confirmed_case)) %>% 
+  ungroup() %>%
+  group_by(country_region) %>% 
+  summarise(day_count = max(day_count), total_confirmed_case = max(max_conf))
+  
+
+ggplot(data = covid_id_big, aes(x = day_count, y = total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) +
+  geom_text(data = covid_id_big_text, label = covid_id_big_text$country_region, hjust = .5, vjust = -.5,
+            check_overlap = T, family = "Poppins Light", alpha = .5, size = 3 ) +
+  
+  labs(title = "Indonesia dan Negara dengan Kasus Terbanyak",
+       subtitle = "Perbandingan Angka dan Perkembangan dari Hari ke Hari",
+       caption = "Data diambil dari John Hopkins School of Public Health. \n Graph by Deo Mareza",
+       x = "Hari",
+       y = NULL,
+       color = NULL) +
+  
+  theme_minimal() +
+  
+    theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "top",
+        legend.key.size = unit(.1, units = "cm"),
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF", color = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+
+```
+
+
+
+
+## Indonesia Compared to its Neighbours
+
+Compared to the other countries, total reported cases in Indonesia doesn't seem too bad, but that shouldn't mean we can get complacent. Indonesia, while not as bad as 10 countries above lags behind its neighbouring countries in terms of the rate of infection.
+<br>
+
+
+```{r}
+
+covid_sel_3_text <- covid_sel_3 %>% 
+  group_by(country_region, day_count) %>% 
+  filter(country_region %in% c("Indonesia", "Singapore","Australia","Malaysia","Japan") & day_count <= 50) %>% 
+  summarise(max_conf = max(total_confirmed_case)) %>% 
+  ungroup() %>%
+  group_by(country_region) %>% 
+  summarise(day_count = max(day_count), total_confirmed_case = max(max_conf))
+  
+
+color_1 <- c("#00C5BE", "#C060FD", "#FF7F55", "#006FE9", "#FF3B87")
+
+ggplot(covid_sel_3 %>% filter(country_region %in% c("Indonesia", 
+                                                    "Singapore", 
+                                                    "Australia", 
+                                                    "Malaysia",
+                                                    "Japan"
+                                                    
+                                                    ) & day_count <= 50), aes(day_count, total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) + theme(legend.position = "right") +
+  geom_text(data = covid_sel_3_text, label = covid_sel_3_text$country_region, hjust = 1.1, 
+            family = "Poppins Light", alpha = .3, size = 3) +
+
+  labs(title = "Covid-19",
+       subtitle = "Perbandingan 50 Hari Pertama antar Negara",
+       caption = "Data diambil dari John Hopkins School of Public Health. \n Graph by Deo Mareza",
+       x = "Hari",
+       y = NULL,
+       color = NULL) +
+  theme_minimal() +
+  scale_color_manual(values = color_1) +
+  theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "top",
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF", color = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+
+```
+
+
+As you can see, our rate of infection rises much quicker than the others, at just 16 days to reach 200 infected, while our neighbours usually takes more than one month.
+
+<br>
+
+# Forecasting Indonesia's Infection Rate
+
+As we have very few data (in this case the lesser is better to be honest), I can't be confident on its accuracy, but it should serve as an image of what's to come if we continue with the current rate of infection. Which is also why we're not splitting our data into train/validation/testing.
+<br>
+
+
+```{r}
+library(forecast)
+
+covid_id <- covid_sel_3 %>% 
+  filter(country_region == "Indonesia")
+  
+```
+
+Creating time series object.
+
+```{r}
+
+covid_id_ts <- ts(covid_id$total_confirmed_case, start = c(3,2), frequency = 7)
+
+```
+
+We're using HoltWinters as our model with no seasonality. 
+
+```{r}
+
+model_covid_id_ts <- HoltWinters(covid_id_ts, gamma = F )
+
+```
+
+Our 3 days forecast plot
+
+```{r}
+library(TSstudio)
+library(tseries)
+
+model_covid_id_forecast <- forecast(model_covid_id_ts, h = 3)
+plot_forecast(model_covid_id_forecast)
+
+```
+
+<br>
+
+# Plotting our Forecast Data 
+
+I created a simple function to make it easier to integrate our forecast into our original dataframe.
+
+```{r}
+
+forecast_to_df <- function(input){
+  storage_list <- data.frame()
+  for(i in 1:length(input)){
+    # print(i)
+    # print(input[i])
+    storage_list <-rbind(storage_list,data.frame(country_region = as.factor("Indonesia"), 
+                      date = as.Date("2020-03-19") + period(i, units = "day"), 
+                      total_confirmed_case = input[i], 
+                      day_count = 17+i,
+                      continent = as.factor( "Asia")))
+
+    
+  }
+  return(storage_list)
+}
+
+forecast_df <- forecast_to_df(model_covid_id_forecast$mean)
+
+```
+
+Below is the plot including our forecast data.
+
+```{r}
+
+ggplot(covid_sel_3 %>% filter(country_region %in% c("Indonesia", 
+                                                    "Singapore", 
+                                                    "Australia", 
+                                                    "Malaysia",
+                                                    "Japan"
+                                                    
+                                                    ) & day_count <= 50), aes(day_count, total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) + theme(legend.position = "right") +
+  geom_line(data = forecast_df, color = "red", linetype = "dashed") +
+  geom_point(data = forecast_df %>% filter(total_confirmed_case == max(total_confirmed_case))) +
+  
+  annotate("text" , label = "Proyeksi Indonesia\ndalam 3 hari", x = 19, y = 550, family = "Poppins Light", hjust = 1.1, alpha = .5, size = 3) +
+  annotate("text" , label = max(forecast_df$total_confirmed_case), x = 21, y = 550, family = "Poppins Light", hjust = 0, alpha = .7, size = 4) +
+  
+  geom_text(data = covid_sel_3_text, label = covid_sel_3_text$country_region, hjust = 1.1, 
+            family = "Poppins Light", alpha = .3, size = 3) +
+
+  labs(title = "Covid-19",
+       subtitle = "Perbandingan 50 Hari Pertama antar Negara",
+       caption = "Data diambil dari John Hopkins School of Public Health. \n Graph by Deo Mareza",
+       x = "Hari",
+       y = NULL,
+       color = NULL) +
+  theme_minimal() +
+  scale_color_manual(values = color_1) +
+  theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "top",
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF", color = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+
+```
+
+
+# Conclusion
+
+While it may look bad at the moment, I believe that Indonesia still has a fighting chance, granted we do our social distancing and practise good hygiene. Currently, we're in a waiting game where everyone is trying to curb infection rate until a vaccine or a cure is found. 
+<br>
+
+Indonesia's rate of infection currently is not great compared to its neighbours, and while the number is still relatively small compared to other European and Middle East countries, we shouldn't get complacent. Indonesia is still very much in the early stage. Whether there will be an exponential increase in the future, we still yet to find out.
+
+
+
+```{r, include = F}
+
+# ENGLISH Version
+ggplot(covid_sel_3 %>% filter(country_region %in% c("Indonesia", 
+                                                    "Singapore", 
+                                                    "Australia", 
+                                                    "Malaysia",
+                                                    "Japan"
+                                                    
+                                                    ) & day_count <= 50), aes(day_count, total_confirmed_case, group = country_region)) +
+  geom_line(aes(color = country_region)) + theme(legend.position = "right") +
+  geom_line(data = forecast_df, color = "red", linetype = "dashed") +
+  geom_point(data = forecast_df %>% filter(total_confirmed_case == max(total_confirmed_case))) +
+  
+  annotate("text" , label = "Forecast Number\nfor 22 March 2020", x = 19.5, y = 550, family = "Poppins Light", hjust = 1.1, alpha = .5, size = 3) +
+  annotate("text" , label = max(forecast_df$total_confirmed_case), x = 21, y = 560, family = "Poppins Light", hjust = 0, alpha = .7, size = 4) +
+  
+  geom_text(data = covid_sel_3_text, label = covid_sel_3_text$country_region, hjust = 1.1, 
+            family = "Poppins Light", alpha = .5, size = 3) +
+
+  labs(title = "Covid-19 Infection Rate",
+       subtitle = "Indonesia and its Neighbours",
+       caption = "Data is from John Hopkins School of Public Health. \nGraph by Deo Mareza",
+       x = "Days since First Patient",
+       y = NULL,
+       color = NULL) +
+  theme_minimal() +
+  scale_color_manual(values = color_1) +
+  theme(text = element_text(family = "Poppins Light"),
+        axis.title.x = element_text(vjust = -1),
+        legend.position = "top",
+        legend.justification = "left",
+        plot.background = element_rect(fill = "#FFFFFF", color = "#FFFFFF"),
+        plot.caption = element_text(size = 5),
+        plot.subtitle = element_text(size = 9))
+
+
+```
+
+
